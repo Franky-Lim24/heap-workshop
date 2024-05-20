@@ -1,0 +1,92 @@
+---
+- name: Deploy FastAPI and MySQL app
+  hosts: web
+  become: yes
+
+  vars:
+    db_name: booklibrary
+    db_user: root
+    db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
+    ansible_user: ec2-user
+    ansible_ssh_private_key_file: ~/heap.pem
+
+  tasks:
+    - name: Ensure Python3, Git, and MySQL client are installed
+      yum:
+        name:
+          - python3
+          - git
+          - mariadb-server # Install MariaDB server
+        state: present
+
+    - name: Install PyMySQL for Python 3
+      pip:
+        name: pymysql
+        state: present
+        executable: /usr/bin/pip3
+
+    - name: Ensure MySQL (MariaDB) is running
+      systemd:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Reset MySQL root password
+      command: mysqladmin -u root password "{{ db_password }}"
+      ignore_errors: yes
+
+    - name: Create MySQL database
+      mysql_db:
+        name: '{{ db_name }}'
+        state: present
+        login_user: '{{ db_user }}'
+        login_password: '{{ db_password }}'
+
+    - name: Create application directory
+      file:
+        path: /home/ec2-user/backend
+        state: directory
+        mode: '0755'
+
+    - name: Ensure ec2-user owns the backend directory
+      command: chown -R ec2-user:ec2-user /home/ec2-user/backend
+      become: yes
+
+    - name: Copy application files (excluding venv)
+      ansible.builtin.shell: |
+        rsync -avz --exclude 'venv' -e "ssh -i {{ ansible_ssh_private_key_file }}" /mnt/c/Users/Franky/Desktop/Projects/book-library/backend/ {{ ansible_user }}@{{ inventory_hostname }}:/home/{{ ansible_user }}/backend/
+      delegate_to: localhost
+      become: false
+
+    - name: Check if virtual environment exists
+      stat:
+        path: /home/ec2-user/backend/venv/bin/activate
+      register: venv_exists
+
+    - name: Create virtual environment if it doesn't exist
+      command: python3 -m venv /home/ec2-user/backend/venv
+      when: not venv_exists.stat.exists
+
+    - name: Ensure pip is available in virtual environment
+      command: /home/ec2-user/backend/venv/bin/python -m ensurepip
+      when: not venv_exists.stat.exists
+
+    - name: Install requirements
+      ansible.builtin.shell: |
+        source /home/ec2-user/backend/venv/bin/activate
+        pip install -r /home/ec2-user/backend/requirements.txt
+      args:
+        executable: /bin/bash
+
+    - name: Create .env file
+      copy:
+        dest: /home/ec2-user/backend/.env
+        content: |
+          DATABASE_URL=mysql+pymysql://{{ db_user }}:{{ db_password }}@localhost/{{ db_name }}
+          OTHER_ENV_VAR=value
+
+    - name: Start the FastAPI app
+      shell: nohup /home/ec2-user/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+      args:
+        chdir: /home/ec2-user/backend
+        executable: /bin/bash
