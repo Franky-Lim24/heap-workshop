@@ -22,8 +22,8 @@ chmod 400 ~/.ssh/MyKeyPair.pem
 1. Clone the Repository
 Clone the repository to your local machine:
 ```sh
-git clone <repository_url>
-cd <repository_name>
+git clone https://github.com/Franky-Lim24/heap-workshop.git
+cd heap-workshop
 ```
 
 2. Deploy Infrastructure with Terraform
